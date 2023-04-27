@@ -37,13 +37,13 @@ class SimpleSwitch13(app_manager.RyuApp):
     def _packet_in_handler(self, ev):
         if ev.msg.msg_len < ev.msg.total_len:
           self.logger.debug("packet truncated: only %s of %s bytes",ev.msg.msg_len, ev.msg.total_len)
-       msg = ev.msg
-       datapath = msg.datapath
+      msg = ev.msg
+      datapath = msg.datapath
       #ofproto = datapath.ofproto
       #parser = datapath.ofproto_parser
-      in_port = msg.match[’in_port’]
+      in_port = msg.match['in_port']
       pkt = packet.Packet(msg.data)
-      eth = pkt.get_protocols(ethernet.ethernet)[0]
+     eth = pkt.get_protocols(ethernet.ethernet)[0]
      dst = eth.dst
      src = eth.src
      ethtype = eth.ethertype

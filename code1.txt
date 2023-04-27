@@ -1,0 +1,281 @@
+from ryu.base import app_manager
+from ryu.controller import ofp_event
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import set_ev_cls
+from ryu.ofproto import ofproto_v1_3
+from ryu.lib.packet import ethernet, packet, mpls, ipv4, tcp
+from ryu.lib.packet import ether_types
+
+class MplsController(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+
+    def __init__(self, *args, **kwargs):
+        super(MplsController, self).__init__(*args, **kwargs)
+        self.mac_to_port = {}
+
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Install the MPLS match rules
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionPushMpls(),
+                   parser.OFPActionSetField(mpls_label=100),
+                   parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 1, match, actions)
+
+        match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_MPLS,
+                                mpls_label=100,
+                                mpls_bos=1)
+        actions = [parser.OFPActionPopMpls(ether_types.ETH_TYPE_IP),
+                   parser.OFPActionOutput(ofproto.OFPP_NORMAL)]
+        self.add_flow(datapath, 2, match, actions)
+
+        # Install the IP match rule
+        match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP)
+        actions = [parser.OFPActionOutput(ofproto.OFPP_NORMAL)]
+        self.add_flow(datapath, 3, match, actions)
+
+
+
+
+///////////////////////////////
+def mpls_handler(self, ev):
+            msg = ev.msg
+            datapath = msg.datapath
+            ofproto = datapath.ofproto
+            parser = datapath.ofproto_parser
+            in_port = msg.match['in_port']
+            dpid = datapath.id
+            pkt = packet.Packet(msg.data)
+            eth = pkt.get_protocols(ethernet.ethernet)[0]
+            dst = eth.dst
+            src = eth.src
+
+            self.logger.info("MPLS Handler is on now:")
+            mpls_pkt= pkt.get_protcol(mpls.mpls)
+            # The switch can be a LSR or a LER, but the match is the same
+            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_type=ethtype,
+            mpls_label=mpls_pkt.label)
+            self.logger.info("Flow match: in_port=%s, dst=%s, type=IP, label=%s", in_port, dst, mpls_pkt.label)
+            # Set the out_port using the relation learnt with the ARP packet
+            out_port = self.mac_to_port[dpid][dst]
+            # we must check the switch ID in order to decide the propper action
+            if dpid == 2:
+            # The switch is a LSR
+            # New label
+                self.label = self.label + 1
+            # Switch labels
+                actions = [parser.OFPActionPopMpls(),parser.OFPActionPushMpls(),parser.OFPActionSetField(mpls_label=self.label),parser.OFPActionOutput(out_port)]
+                self.logger.info("Flow actions: switchMPLS=%s, out_port=%s", self.label, out_port)
+            else:
+                # The switch is a LER
+                # Pop that label!
+                actions = [parser.OFPActionPopMpls(),parser.OFPActionOutput(out_port)]
+                self.logger.info("Flow actions: popMPLS, out_port=%s", out_port)
+            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                return
+            else:
+                self.add_flow(datapath, 1, match, actions)
+            data = None
+            if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                data = msg.data
+            out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id, in_port=in_port, actions=actions, data=data)
+            datapath.send_msg(out)
+
+        
+
+    def add_flow(self, datapath, priority, match, actions):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+                                             actions)]
+        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                match=match, instructions=inst)
+        datapath.send_msg(mod)
+
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def packet_in_handler(self, ev):
+        # Parse the incoming packet
+        msg = ev.msg
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
+
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
+
+        if eth.ethertype == ether_types.ETH_TYPE_IP:
+            # Process IP packets
+            ipv4_pkt = pkt.get_protocol(ipv4.ipv4)
+            tcp_pkt = pkt.get_protocol(tcp.tcp)
+
+            # Do something with the IP packet
+            # ...
+
+        elif eth.ethertype == ether_types.ETH_TYPE_MPLS:
+            # Process MPLS packets
+            mpls_pkt = pkt.get_protocol(mpls.mpls)
+
+            # Do something with the MPLS packet
+            # ...
+
+        else:
+            # Ignore other types of packets
+            pass
+
+
+
+///////////
+actions.append(parser.OFPActionPushMpls(ethertype=0x8847)) # Push an MPLS label with type 0x8847 onto the packet
+actions.append(parser.OFPActionSetField(mpls_label=new_label)) # Swap the top MPLS label with new_label
+actions.append(parser.OFPActionPopMpls(ethertype=0x0800)) # Pop the top MPLS label with type 0x0800 from the packet
+
+match = parser.OFPMatch(...) # Define the match criteria
+actions = [] # Define the actions to be performed
+actions.append(parser.OFPActionPushMpls(ethertype=0x8847)) # Push an MPLS label with type 0x8847 onto the packet
+actions.append(parser.OFPActionSetField(mpls_label=new_label)) # Swap the top MPLS label with new_label
+actions.append(parser.OFPActionPopMpls(ethertype=0x0800)) # Pop the top MPLS label with type 0x0800 from the packet
+flow_mod = parser.OFPFlowMod(datapath=datapath, match=match, actions=actions, priority=0)
+datapath.send_msg(flow_mod) # Send the flow modification message to the switch
+
+
+
+
+///////////
+
+class MyController(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+
+    def __init__(self, *args, **kwargs):
+        super(MyController, self).__init__(*args, **kwargs)
+        self.mac_to_port = {}
+        self.sw_to_label = {'0000000000000001': 100}  # Mapping of switch dpid to MPLS label
+
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Install table-miss flow entry
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
+
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def packet_in_handler(self, ev):
+        msg = ev.msg
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Get the switch's MPLS label
+        switch_label = self.sw_to_label.get(datapath.id, None)
+        if switch_label is None:
+            self.logger.error('Switch label not found for switch %s', datapath.id)
+            return
+
+        # Parse the packet
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
+
+        if eth.ethertype == ether_types.ETH_TYPE_IP:
+            # The packet is an IPv4 packet, ignore it
+            return
+
+        # Push the MPLS label
+        label_action = parser.OFPActionPushMpls(ether_types.ETH_TYPE_MPLS)
+        set_label_action = parser.OFPActionSetField(mpls_label=switch_label)
+        actions = [label_action, set_label_action]
+
+        # Output the packet to the host
+        host_port = self.mac_to_port.get(datapath.id, {}).get(eth.src, None)
+        if host_port is None:
+            self.logger.error('Port not found for host %s on switch %s', eth.src, datapath.id)
+            return
+
+        out_port = host_port
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id, in_port=ofproto.OFPP_CONTROLLER,
+                                  actions=actions, data=msg.data, out_port=out_port)
+        datapath.send_msg(out)
+////
+from ryu.base import app_manager
+from ryu.controller import ofp_event
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import set_ev_cls
+from ryu.ofproto import ofproto_v1_3
+from ryu.ofproto import ether
+from ryu.lib.packet import packet, ethernet, mpls
+
+class LER(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+
+    def __init__(self, *args, **kwargs):
+        super(LER, self).__init__(*args, **kwargs)
+
+    # This method will be called when Ryu connects to the switch.
+    # It will install the table-miss flow entry on the switch so
+    # that packets that don't match any flow entry will be sent
+    # to the controller.
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Install the table-miss flow entry.
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
+
+    # This method will be called whenever a packet arrives at the switch.
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def packet_in_handler(self, ev):
+        # Parse the packet data.
+        msg = ev.msg
+        datapath = msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+
+        # Check if the packet is an IP packet.
+        if eth.ethertype == ether.ETH_TYPE_IP:
+            # TODO: Handle IP packets here.
+            pass
+        # Check if the packet is an MPLS packet.
+        elif eth.ethertype == ether.ETH_TYPE_MPLS:
+            # Get the MPLS label from the packet.
+            mpls_pkt = pkt.get_protocols(mpls.mpls)[0]
+            mpls_label = mpls_pkt.label
+
+            # Prepare the new MPLS label to be pushed onto the packet.
+            new_mpls_label = 20
+
+            # Create the MPLS header with the new label.
+            new_mpls = mpls.mpls(label=new_mpls_label, ttl=64)
+
+            # Insert the MPLS header into the packet.
+            pkt.insert(0, new_mpls)
+
+            # Update the Ethernet header.
+            eth_pkt = pkt.get_protocols(ethernet.ethernet)[0]
+            eth_pkt.ethertype = ether.ETH_TYPE_MPLS
+
+            # Prepare the actions to push the new MPLS label.
+            actions = [parser.OFPActionPushMpls(ether.ETH_TYPE_MPLS),
+                       parser.OFPActionSetField(mpls_label=new_mpls_label),
+                       parser.OFPActionOutput(ofproto.OFPP_NORMAL, 0)]
+
+            # Send the actions to the switch to push the new MPLS label.
+            out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                      in_port=in_port, actions=actions, data=pkt.data)
+            datapath.send_msg(out)

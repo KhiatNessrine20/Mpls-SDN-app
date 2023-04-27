@@ -1,0 +1,74 @@
+class MPLSApp(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_4.OFP_VERSION]
+    
+    def __init__(self, *args, **kwargs):
+        super(MPLSApp, self).__init__(*args, **kwargs)
+        self.mac_to_port = {}
+        self.label_to_switch = {}
+        self.switch_to_label = {}
+        
+    def add_flow(self, datapath, priority, match, actions):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+                                             actions)]
+        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                match=match, instructions=inst)
+        datapath.send_msg(mod)
+        
+    def install_flow(self, datapath, match, actions):
+        self.add_flow(datapath, 1, match, actions)
+        
+    def mpls_push(self, datapath, in_port, eth_dst, eth_src, label):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        match = parser.OFPMatch(in_port=in_port, eth_type=0x0800)
+        actions = [parser.OFPActionPushMpls(),
+                   parser.OFPActionSetField(mpls_label=label),
+                   parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.install_flow(datapath, match, actions)
+        
+        match = parser.OFPMatch(in_port=in_port, eth_type=0x8847,
+                                mpls_label=label)
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.install_flow(datapath, match, actions)
+        
+        actions = [parser.OFPActionOutput(ofproto.OFPP_NORMAL)]
+        match = parser.OFPMatch(in_port=in_port, eth_type=0x0800,
+                                eth_dst=eth_dst, eth_src=eth_src)
+        self.install_flow(datapath, match, actions)
+        
+    def mpls_pop(self, datapath, in_port, eth_dst, eth_src, label):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        match = parser.OFPMatch(in_port=in_port, eth_type=0x8847,
+                                mpls_label=label)
+        actions = [parser.OFPActionPopMpls(0x0800),
+                   parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.install_flow(datapath, match, actions)
+        
+        actions = [parser.OFPActionOutput(ofproto.OFPP_NORMAL)]
+        match = parser.OFPMatch(in_port=in_port, eth_type=0x0800,
+                                eth_dst=eth_dst, eth_src=eth_src)
+        self.install_flow(datapath, match, actions)
+        
+    def add_label(self, datapath, label):
+        self.label_to_switch[label] = datapath.id
+        self.switch_to_label[datapath.id] = label
+        
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(dat
