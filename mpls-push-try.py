@@ -33,31 +33,12 @@ class MPLS(app_manager.RyuApp):
         parser = datapath.ofproto_parser 
         inst =[parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,actions)]
         if buffer_id:
-            mod = parser.OFPFlowMod(datapath=datapath,buffer_id=buffer_id, priority=priority, match=match, instructions=inst)
+                mod = parser.OFPFlowMod(datapath=datapath,buffer_id=buffer_id, priority=priority, match=match, instructions=inst)
         else:
-            mod = parser.OFPFlowMod(datapath=datapath,priority=priority,match=match,instructions=inst) 
+             mod = parser.OFPFlowMod(datapath=datapath,priority=priority,match=match,instructions=inst) 
         datapath.send_msg(mod)
 
-    # This method will be called whenever a packet arrives at the switch.
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-    def packet_in_handler(self, ev):
-        # Parse the packet data.
-        msg = ev.msg
-        datapath = msg.datapath
-        
-        in_port = msg.match['in_port']
-        pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]    
-        dpid = datapath.id
-        mpls_proto = pkt.get_protocol(mpls.mpls)
-        dst  = eth.dst
-        src = eth.src     
-        ethtype = eth.ethertype
-        # The switch can be a LSR or a LER, but the match is the same
-            # Set the out_port using the relation learnt with the ARP packet 
-        #out_port = self.mac_to_port[dpid][dst]
-        self.mac_to_port.setdefault(dpid, {} )
-    
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def arpHandler(self, msg):
         datapath = msg.datapath
@@ -78,7 +59,17 @@ class MPLS(app_manager.RyuApp):
         else:
             out_port = ofproto.OFPP_FLOOD
             # install a flow to avoid packet_in next time
+        
         actions = [parser.OFPActionOutput(out_port)]
+        self.label = self.label + 1
+        self.dst_to_label[dpid][dst] = self.label 
+        # Set the out_port using the relation learnt with the ARP packet
+        out_port = self.mac_to_port[dpid][dst]
+        # Set the action to be performed by the datapath       
+        actions = [parser.OFPActionPushMpls(ethertype=34887,type_=None, len_=None),parser.OFPActionSetField(mpls_label=self.label),parser.OFPActionOutput(out_port)]
+        self.logger.info("Flow match: in_port=%s, dst=%s, type=IP", in_port, dst)
+        self.logger.info("Flow actions: pushMPLS=%s, out_port=%s", self.label, out_port)
+        
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst, eth_type=ethtype)
             self.logger.info("Flow match: in_port=%s, src=%s, dst=%s, type=ARP" % ( in_port, src, dst))
@@ -98,14 +89,7 @@ class MPLS(app_manager.RyuApp):
             datapath.send_msg(out)
         
 
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-    def MPLS_Handler(self, msg):
-        datapath= msg.datapath
-        ofproto= datapath.ofproto
-        parser = datapath.ofproto_parser
-        in_port = msg.match['in_port']
-        dpid = datapath.id
-        pkt = packet.Packet(msg.data)
+
         ipv4_pkt= pkt.get_protocols(ipv4.ipv4)
         src_ip = ipv4_pkt.src
         dst_ip = ipv4_pkt.dst
@@ -159,3 +143,29 @@ class MPLS(app_manager.RyuApp):
             out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                            in_port=in_port,actions=actions, data=data)
             datapath.send_msg(out)
+
+       
+
+
+
+
+
+    # This method will be called whenever a packet arrives at the switch.
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def packet_in_handler(self, ev):
+        # Parse the packet data.
+        msg = ev.msg
+        datapath = msg.datapath
+        in_port = msg.match['in_port']
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]    
+        dpid = datapath.id
+        dst  = eth.dst
+        src = eth.src     
+        ethtype = eth.ethertype
+        # The switch can be a LSR or a LER, but the match is the same
+            # Set the out_port using the relation learnt with the ARP packet 
+        #out_port = self.mac_to_port[dpid][dst]
+        self.mac_to_port.setdefault(dpid, {} )
+    
+    
