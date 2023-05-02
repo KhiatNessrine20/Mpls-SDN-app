@@ -6,12 +6,12 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.lib import dpid as dpid_lib
 from ryu.lib import stplib
 from ryu.lib.packet import packet
-from ryu.lib.packet import ethernet, mpls
+from ryu.lib.packet import ethernet, mpls, ipv4
 #from ryu.app import simple_switch_13
-from ryu.app import simple_switch_stp13
+from ryu.app import simple_switch_stp_13
 
 
-class mplsclass (simple_switch_stp13.SimpleSwitch13):
+class mplsclass (simple_switch_stp_13.SimpleSwitch13):
         OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
         
         def __init__( self, *args, **kwargs):
@@ -47,6 +47,7 @@ class mplsclass (simple_switch_stp13.SimpleSwitch13):
             self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)  # %s is a string placeholder qui sera remplacer avec dpid;... elhssab tartib
             # in what follows; hn alfo9a we created a dict to map the mac addr to the port w wwsh sra na c que hadk l dict tae mac: port is splitted kinda, cad que rah ywli kayn  fih 2( source mac et le portt & dest mac et son port), thi sway le switch yshfa ela frm win an dto win lpacket ja o lzm yroh ( arp processes)
             #out_port = self.mac_to_port[dpid][dst]
+            
             self.mac_to_port[dpid][src] = in_port
             if dst in self.mac_to_port[dpid]:
                 out_port = self.mac_to_port[dpid][dst]
@@ -85,26 +86,31 @@ class mplsclass (simple_switch_stp13.SimpleSwitch13):
             dst = eth.dst
             src = eth.src      
             ethtype = eth.ethertype
+            ipv4_packet= pkt.get_protocols(ipv4.ipv4)
             mpls_proto = pkt.get_protocol(mpls.mpls)
             out_port = self.mac_to_port[dpid][dst]
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_type=ethtype, mpls_label=mpls_proto.label)
+            label = mpls_proto.label
+            self.dst_to_label.setdefault(dpid, {}) #intit a dict for each swicth contenant label 
+            self.dst_to_label[dpid][dst] = label  # storing the label mapped to the sestination
+            #match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_type=ethtype, mpls_label=mpls_proto.label)
             self.logger.info("Flow match: in_port=%s, dst=%s, type=IP, label=%s", in_port, dst, mpls_proto.label)
 
             if dpid == 1 : #c'est un Ler Ingress
                 self.label = self.label + 1
                 self.dst_to_label[dpid][dst] = self.label
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_type=2048)
                 actions = [parser.OFPActionPushMpls(), parser.OFPActionSetField(mpls_label=self.label), parser.OFPActionOutput(out_port)]
                 self.logger.info("Flow actions: Switch MPLS LER_In=%s, out_port=%s", self.label, out_port)
             
             elif dpid == 2 or dpid==3: #c'est un LSR
                 self.label = self.label + 1
                 self.dst_to_label[dpid][dst] = self.label
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_type=34887, mpls_label=mpls_proto.label)
                 actions = [parser.OFPActionPopMpls(), parser.OFPActionPushMpls(), parser.OFPActionSetField(mpls_label=self.label), parser.OFPActionOutput(out_port)]
                 self.logger.info("Flow actions: switch MPLS LSR=%s, out_port=%s", self.label, out_port)
             
             elif dpid == 4:#c'est un LER Egress
-
-
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_type=34887, mpls_label=mpls_proto.label)
                 actions = [parser.OFPActionPopMpls(), parser.OFPActionOutput(out_port)]
                 self.logger.info("Flow actions: switch MPLS LER_Eg=%s, out_port=%s", self.label, out_port)
 
@@ -120,18 +126,6 @@ class mplsclass (simple_switch_stp13.SimpleSwitch13):
             datapath.send_msg(out)
             
 
-
-            
-
-
-
-            
-            
-            
-
-
-
-
         @set_ev_cls(stplib.EventPacketIn, MAIN_DISPATCHER)
         def _packet_in_handler(self, ev):
             msg = ev.msg
@@ -144,14 +138,41 @@ class mplsclass (simple_switch_stp13.SimpleSwitch13):
             dst = eth.dst
             src = eth.src
             dpid = datapath.id
+            mpls_proto = pkt.get_protocol(mpls.mpls)
+            label = mpls_proto.label
             ethtype = eth.ethertype # permet d'extraire le type de protocol du paquet reçu
             self.mac_to_port.setdefault(dpid, {}) # creation d'un dictionnaire propore au switch ida mnsh already created with a key as dpid
             self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
             if ethtype == 2048:
                 self.arp_handler(ev)
-            elif ethtype == 2054 or ethtype == 34887:
+            
+            if ethtype ==34887:
                 self.mpls_handler(ev)
+          # Check if the destination host is in the dst_to_label dictionary
+                if  dst in self.dst_to_label[datapath.id]:
+
+               # Get the MPLS label for the destination
+                    label = self.dst_to_label[datapath.id][dst]
+
+                # Create an OFP match with the MPLS label
+                    match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_type=2048, mpls_label=label)
+
+                # Create OFP actions to forward the packet
+                    actions = [parser.OFPActionOutput(self.mac_to_port[datapath.id][dst])]
+
+                # Install the flow entry
+                    self.add_flow(datapath, 1, match, actions)
+
+                # Send the packet to the output port
+                    data = None
+                    if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                        data = msg.data
+            
+                    out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                      in_port=in_port, actions=actions, data=data)
+                    datapath.send_msg(out)
+
            # learn a mac address to avoid FLOOD next time.
             self.mac_to_port[dpid][src] = in_port
 
