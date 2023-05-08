@@ -1,0 +1,45 @@
+# Inside the _packet_in_handler method
+
+# Get the input switch (datapath) ID
+dpid = format(datapath.id, "d").zfill(16)
+
+# Check if the input switch ID is in the switch_ports dictionary
+if dpid in switch_ports:
+    # Get the input port for the current switch
+    in_ports = switch_ports[dpid]['in_port']
+
+    # Get the output ports for the current switch
+    out_ports = switch_ports[dpid]['out_port']
+
+    # Check if the input port of the received packet is in the input ports list
+    if in_port in in_ports:
+        # Check if the destination MAC address is known
+        if dst in self.mac_to_port[dpid]:
+            # Forward the packet to the output port corresponding to the destination MAC address
+            out_port = self.mac_to_port[dpid][dst]
+        else:
+            # Forward the packet to all output ports
+            out_port = ofproto.OFPP_FLOOD
+
+        # Check if the calculated output port is in the output ports list
+        if out_port in out_ports:
+            actions = [parser.OFPActionOutput(out_port)]
+
+            # Install a flow to avoid packet_in next time
+            if out_port != ofproto.OFPP_FLOOD:
+                match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+                if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                    self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                    return
+                else:
+                    self.add_flow(datapath, 1, match, actions)
+
+            # Send the packet out the specified output port
+            data = None
+            if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                data = msg.data
+
+            out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                      in_port=in_port, actions=actions, data=data)
+            datapath.send_msg(out)
+            return
