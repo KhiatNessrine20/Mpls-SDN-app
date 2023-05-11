@@ -18,7 +18,7 @@ import networkx as nx
 
 class ProjectController(app_manager.RyuApp):
 	
-    OFP_VERSIONS = [ofproto_v1_0.OFP_VERSION]
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(ProjectController, self).__init__(*args, **kwargs)

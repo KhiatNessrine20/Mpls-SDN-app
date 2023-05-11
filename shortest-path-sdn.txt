@@ -1,0 +1,53 @@
+class ProjectController(app_manager.RyuApp):
+    # ...
+
+    def mpls_forwarding(self, datapath, in_port, packet, src, dst):
+        ofproto = datapath.ofproto
+
+        # Calculate the shortest path using Networkx
+        path = nx.shortest_path(self.net, src, dst)
+        next_hop = path[path.index(datapath.id) + 1]
+
+        # Get the output port for the next hop
+        out_port = self.net[datapath.id][next_hop]['port']
+
+        actions = []
+
+        # Check if MPLS labels need to be added
+        if out_port != ofproto.OFPP_FLOOD:
+            # Add MPLS label to the packet
+            mpls_label = 100  # Example MPLS label value
+            actions.append(datapath.ofproto_parser.OFPActionPushMpls(ethertype=ether_types.ETH_TYPE_MPLS))
+            actions.append(datapath.ofproto_parser.OFPActionSetField(mpls_label=mpls_label))
+            actions.append(datapath.ofproto_parser.OFPActionSetField(eth_src=packet.get_protocol(ethernet.ethernet).src))
+            actions.append(datapath.ofproto_parser.OFPActionSetField(eth_dst=packet.get_protocol(ethernet.ethernet).dst))
+
+        actions.append(datapath.ofproto_parser.OFPActionOutput(out_port))
+
+        # Install a flow to avoid packet_in next time
+        if out_port != ofproto.OFPP_FLOOD:
+            self.add_flow(datapath, in_port, dst, actions)
+
+        # Send the modified packet
+        out = datapath.ofproto_parser.OFPPacketOut(
+            datapath=datapath, buffer_id=packet.buffer_id, in_port=in_port,
+            actions=actions, data=packet.data)
+        datapath.send_msg(out)
+
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def _packet_in_handler(self, ev):
+        msg = ev.msg
+        datapath = msg.datapath
+
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
+
+        dst = eth.dst
+        src = eth.src
+
+        # Process MPLS forwarding only for specific ethertypes (e.g., IPv4)
+        if eth.ethertype == ether_types.ETH_TYPE_IP:
+            self.mpls_forwarding(datapath, msg.in_port, pkt, src, dst)
+        else:
+            # Default forwarding behavior for other packet types
+            self.default_forwarding(datapath, msg.in_port, pkt, src, dst)
