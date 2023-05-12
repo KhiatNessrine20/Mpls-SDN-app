@@ -54,12 +54,26 @@ class SimpleSwitch13(app_manager.RyuApp):
         datapath.send_msg(mod)
 
     def arp_process(self, datapath, eth, a, in_port):
-        r = arp_table.get(a.dst_ip)
-        if r:
-            self.logger.info("Matched MAC %s ", r)
+        # Break the loop for avoiding ARP broadcast storm
+        if eth:
+            eth_dst = eth.dst
+            eth_src = eth.src
+       
+       
+        if eth_dst == mac.BROADCAST_STR and arp_pkt:
+            arp_dst_ip = arp_pkt.dst_ip
+
+            if (datapath.id, eth_src, arp_dst_ip) in self.sw:
+                if self.sw[(datapath.id, eth_src, arp_dst_ip)] != in_port:
+                    datapath.send_packet_out(in_port=in_port, actions=[])
+                    return True
+            else:
+                self.sw[(datapath.id, eth_src, arp_dst_ip)] = in_port
+            
+            self.logger.info("Matched MAC %s ")
             arp_resp = packet.Packet()
             arp_resp.add_protocol(ethernet.ethernet(ethertype=eth.ethertype,
-                                  dst=eth.src, src=r))
+                                  dst=eth.src, src=eth.dst))
             arp_resp.add_protocol(arp.arp(opcode=arp.ARP_REPLY,
                                   src_mac=r, src_ip=a.dst_ip,
                                   dst_mac=a.src_mac,
