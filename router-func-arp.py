@@ -137,6 +137,33 @@ class Router(app_manager.RyuApp):
     def arp_process(self, datapath, eth, a, in_port):
         switch_dpid = hex(datapath.id)[2:].zfill(16)
         switch_arp_table = self.arp_table.get(switch_dpid)
+        
+        if a.dst_ip == '255.255.255.255':
+        # ARP request is a broadcast address, respond with the outgoing interface MAC
+            dst_mac = self.get_mac_address(switch_dpid, in_port)
+            if dst_mac:
+                arp_resp = packet.Packet()
+                arp_resp.add_protocol(ethernet.ethernet(ethertype=eth.ethertype,
+                                                   dst=eth.src,
+                                                   src=dst_mac))
+                arp_resp.add_protocol(arp.arp(opcode=arp.ARP_REPLY,
+                                          src_mac=dst_mac,
+                                          src_ip=a.dst_ip,
+                                          dst_mac=a.src_mac,
+                                          dst_ip=a.src_ip))
+                arp_resp.serialize()
+                actions = [datapath.ofproto_parser.OFPActionOutput(in_port)]
+                parser = datapath.ofproto_parser
+                ofproto = datapath.ofproto
+                out = parser.OFPPacketOut(datapath=datapath,
+                                      buffer_id=ofproto.OFP_NO_BUFFER,
+                                      in_port=ofproto.OFPP_CONTROLLER,
+                                      actions=actions,
+                                      data=arp_resp)
+                datapath.send_msg(out)
+                self.logger.info("Proxied ARP Response packet (Broadcast)")
+                return 
+
         if switch_arp_table:
             for entry in switch_arp_table:
                 if entry['ip_address'] == a.dst_ip:
@@ -194,9 +221,6 @@ class Router(app_manager.RyuApp):
         if icmp_type == 11:
             self.logger.info("TYPE 11 ICMP: Time Exceeded")
             payload = icmp.TimeExceeded(data=payload)
-
-        ## pkt.add_protocol(...)
-        ## https://ryu.readthedocs.io/en/latest/library_packet_ref/packet_icmp.html
 
         pkt.add_protocol(ethernet.ethernet(
             dst=dst_mac,
@@ -268,46 +292,42 @@ class Router(app_manager.RyuApp):
                 
 
          # Check packets IP against routing table - including subnets - and get the hop IP and the output port
-        routes = self.find_route(dpid, ip_dst)
-        if not routes:
+            routes = self.find_route(dpid, ip_dst)
+            if not routes:
             # Destination is not in routing table, send ICMP destination unreachable message
-            self.logger.info("Destination is not in routing table")
-            self.send_icmp(datapath=datapath, dst_ip=ip_src, src_mac=mac_src,
+                self.logger.info("Destination is not in routing table")
+                self.send_icmp(datapath=datapath, dst_ip=ip_src, src_mac=mac_src,
                            icmp_type=3, icmp_code=0, ip_ihl=ip_ihl, icmp_data=data)
-            return
+                return
 
-        out_port = routes[0].get("Out Port")
-        hop_ip = routes[0].get("Next Hop")
-        if hop_ip is None:
-            hop_ip = ip_dst
+            out_port = routes[0].get("Out Port")
+            hop_ip = routes[0].get("Next Hop")
+            if hop_ip is None:
+                hop_ip = ip_dst
 
         # Get MAC of next hop from ARP table
-        hop_mac = self.find_mac_address( hop_ip)
-        if hop_mac is None:
+            hop_mac = self.find_mac_address( hop_ip)
+            if hop_mac is None:
             # Hop IP isn't in ARP table, send ICMP host unreachable message
-            self.logger.info("Hop IP {} isn't in ARP table".format(hop_ip))
-            self.send_icmp(datapath=datapath, dst_ip=ip_src, src_mac=mac_src,
+                self.logger.info("Hop IP {} isn't in ARP table".format(hop_ip))
+                self.send_icmp(datapath=datapath, dst_ip=ip_src, src_mac=mac_src,
                            icmp_type=3, icmp_code=1, ip_ihl=ip_ihl, icmp_data=data)
-            return
+                return
 
         # Change packet's MAC dst to the next hop, and MAC src to the outgoing port's MAC
-        out_mac = self.get_mac_address(dpid, out_port)
-        if out_mac is None:
+            out_mac = self.get_mac_address(dpid, out_port)
+            if out_mac is None:
             # Unknown error occurred, return
-            return
+                return
 
-        actions = [
-            parser.OFPActionDecNwTtl(),
-            parser.OFPActionSetField(eth_src=out_mac),
-            parser.OFPActionSetField(eth_dst=hop_mac),
-            parser.OFPActionOutput(port=out_port)
-        ]
+            actions = [parser.OFPActionDecNwTtl(),parser.OFPActionSetField(eth_src=out_mac),parser.OFPActionSetField(eth_dst=hop_mac),
+                parser.OFPActionOutput(port=out_port)]
 
-        match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=(ip_dst, '255.255.255.0'))
-        self.add_flow(datapath, 5, match, actions)
+            match = parser.OFPMatch(eth_type=0x0800, ipv4_dst=(ip_dst, '255.255.255.0'))
+            self.add_flow(datapath, 5, match, actions)
 
-        # Send packet
-        self.logger.info("{}: Routing packet (TTL {}) to {} with target MAC {} (from port {} hopping to {})".format(
-            dpid, ip_ttl, ip_dst, hop_mac, out_port, hop_ip))
-        datapath.send_msg(parser.OFPPacketOut(datapath, ev.msg.buffer_id, in_port, actions, data))
+            # Send packet
+            self.logger.info("{}: Routing packet (TTL {}) to {} with target MAC {} (from port {} hopping to {})".format(
+                dpid, ip_ttl, ip_dst, hop_mac, out_port, hop_ip))
+            datapath.send_msg(parser.OFPPacketOut(datapath, ev.msg.buffer_id, in_port, actions, data))
 
